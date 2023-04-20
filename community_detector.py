@@ -6,11 +6,14 @@
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import svds
+import time
 
 ## Read input from file
 # FILEPATH = "zacharys_karate_club"
 # FILEPATH = "dolphins_social_network"
-FILEPATH = "les_miserables"
+# FILEPATH = "les_miserables"
+FILEPATH = "example"
+# FILEPATH = "example_broken"
 train_i = []
 train_j = []
 train_val = []
@@ -41,10 +44,12 @@ n = num_nodes
 k = num_comms
 _lambda = 2                 # value used in experiment
 initer, outiter = 500, 50   # value used in experiment
+initer, outiter = 100, 10   # value used in experiment
 
 ## Initialize trainable parameters
-D = np.random.rand(n,k)
-C = np.random.rand(k,n)
+np.random.seed(0)
+D = np.random.rand(n, k,)
+C = np.random.rand(k, n)
 X = A = M.toarray()
 
 ## Initialize D and C
