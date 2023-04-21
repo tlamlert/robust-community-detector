@@ -10,9 +10,9 @@ from scipy.sparse.linalg import svds
 
 ## Read input from file
 DIRECTORY = "homogenous_dataset/"
-FILEPATH = "zacharys_karate_club"
+# FILEPATH = "zacharys_karate_club"
 # FILEPATH = "dolphins_social_network"
-# FILEPATH = "les_miserables"
+FILEPATH = "les_miserables"
 train_i = []
 train_j = []
 train_val = []
@@ -25,7 +25,15 @@ with open(DIRECTORY + FILEPATH, "r") as file:
         train_j.append(int(j))
         train_val.append(1)
 
-M = sparse.coo_matrix((train_val + train_val, (train_i + train_j, train_j + train_i)), shape=(num_nodes, num_nodes)).tocsr()
+def construct_matrix(i, j, val, dropout_rate=0):
+    num_edges = len(i)
+    mask = np.random.rand(num_edges) > dropout_rate
+    val = [val[idx] for idx in range(len(mask)) if mask[idx]]
+    i = [i[idx] for idx in range(len(mask)) if mask[idx]]
+    j = [j[idx] for idx in range(len(mask)) if mask[idx]]
+    return sparse.coo_matrix((val + val, (i + j, j + i)), shape=(num_nodes, num_nodes)).tocsr()
+
+M = construct_matrix(train_i, train_j, train_val, dropout_rate=0)
 
 """
 Optimization algorithm of EA2NMF
@@ -55,7 +63,6 @@ X = A = M.toarray()
 for _ in range(10):
     D = D * (X @ C.T) / (D @ C @ C.T + epsilon)
     C = C * (D.T @ X) / (D.T @ D @ C + epsilon)
-    # D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
 
 for _ in range(outiter):
     ## Maximize perturbation
@@ -66,7 +73,6 @@ for _ in range(outiter):
         ## Minimize objective function
         D = D * (X @ C.T) / (D @ C @ C.T + epsilon)
         C = C * (D.T @ X) / (D.T @ D @ C + epsilon)
-        # D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
 
 print("P norm: ", linalg.norm(P) ** 2)
 print("X norm: ", linalg.norm(X) ** 2)

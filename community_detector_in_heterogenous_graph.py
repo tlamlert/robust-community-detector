@@ -6,6 +6,7 @@ import numpy as np
 from numpy import linalg
 from scipy import sparse
 from scipy.sparse.linalg import svds
+from tqdm import tqdm
 import itertools
 
 ## Read input from file
@@ -81,9 +82,10 @@ a = [6, 3, 3]
 b = [2, 1]
 c = [4, 2, 2]
 d = [2, 1]                      # value used in experiment
+epsilon = 1e-16
 
 ## Initialize trainable parameters
-np.random.seed(42)
+# np.random.seed(42)
 U = [np.random.rand(n, k) for _ in A]
 W = [np.random.rand(n, k) for _ in X]
 H = [np.random.rand(matrix.shape[1], k) for matrix in X]
@@ -91,25 +93,25 @@ S = np.random.rand(n, k)
 
 ## Minimize objective function
 ## https://www.hindawi.com/journals/mpe/2016/5750645/
-for i in range(500):
+for i in tqdm(range(2000)):
     for t in range(p):
         # Update U
         numerator = a[t] * A[t] @ U[t] + c[t] * U[t] @ S.T @ S
         denominator = a[t] * U[t] @ U[t].T @ U[t] + c[t] * U[t] @ U[t].T @ U[t]
-        U[t] = U[t] * ((numerator / denominator) ** 0.5)
+        U[t] = U[t] * ((numerator / (denominator + epsilon)) ** 0.5)
     for t in range(q):
         # Update W
         W_numerator = b[t] * X[t] @ H[t] + 2 * d[t] * W[t] @ S.T @ S
         W_denominator = b[t] * W[t] @ H[t].T @ H[t] + 2 * d[t] * W[t] @ W[t].T @ W[t]
-        W[t] = W[t] * ((W_numerator / W_denominator) ** 0.5)
+        W[t] = W[t] * ((W_numerator / (W_denominator + epsilon)) ** 0.5)
         # Update H
         H_numerator = X[t].T @ W[t]
         H_denominator = H[t] @ W[t].T @ W[t]
-        H[t] = H[t] * ((H_numerator / H_denominator) ** 0.5)
+        H[t] = H[t] * ((H_numerator / (H_denominator + epsilon)) ** 0.5)
     # Update S
     numerator = sum(c[t] * S @ U[t].T @ U[t] for t in range(p)) + sum(d[t] * S @ W[t].T @ W[t] for t in range(q))
     denominator = (sum(c) + sum(d)) * S @ S.T @ S
-    S = S * ((numerator / denominator) ** 0.5)
+    S = S * ((numerator / (denominator + epsilon)) ** 0.5)
 
     if (i + 1) % 100 == 0:
         loss = (sum(a[t] * linalg.norm(A[t] - U[t] @ U[t].T) ** 2 for t in range(p))
@@ -117,11 +119,8 @@ for i in range(500):
                 + sum(c[t] * linalg.norm(U[t].T @ U[t] - S.T @ S) ** 2 for t in range(p))
                 + sum(d[t] * linalg.norm(W[t].T @ W[t] - S.T @ S) ** 2 for t in range(q)))
         print("training loss after {} iterations: {}".format(i + 1, loss))
-        # print(sum(a[t] * linalg.norm(A[t] - U[t] @ U[t].T) ** 2 for t in range(p)))
-        # print(sum(c[t] * linalg.norm(U[t].T @ U[t] - S.T @ S) ** 2 for t in range(p)))
-
-print(linalg.norm(A[0] - U[0] @ U[0].T) ** 2)
-print(linalg.norm(A[0] - S @ S.T) ** 2)
+        print(sum(a[t] * linalg.norm(A[t] - U[t] @ U[t].T) ** 2 for t in range(p)))
+        print(sum(b[t] * linalg.norm(X[t] - W[t] @ H[t].T) ** 2 for t in range(q)))
 
 ## Inference
 community = [[] for _ in range(num_comms)]
@@ -133,7 +132,7 @@ accuracy = 0
 for perm in (itertools.permutations(range(num_comms))):
     num_correct = 0
     for i, comm in enumerate(label_comms):
-        num_correct += len(set(community[i]) & set(label_comms[comm]))
+        num_correct += len(set(community[perm[i]]) & set(label_comms[comm]))
     accuracy = max(accuracy, num_correct / num_users)
 print("Model accuracy: {}".format(accuracy))
 
@@ -141,49 +140,3 @@ with open(OUTPUT_FILEPATH, "w") as file:
     for i in range(num_comms):
         community[i].sort()
         file.write("Community {}: {}\n".format(i, ", ".join(str(ele) for ele in community[i])))
-
-"""
-Optimization algorithm of EA2NMF
-Input:
-    The adjacency matrix A;
-    The set of nodes V;
-    The hyper-parameter λ;
-    The number of communities k;
-    The numbers of iterations initer, outiter;
-Output: the set of communities S = {s1, s2, · · · , sk};
-"""
-
-# ## Initialize hyperparameters
-# n = num_users
-# k = num_comms
-# _lambda = 2                 # value used in experiment
-# initer, outiter = 500, 50   # value used in experiment
-# initer, outiter = 100, 10   # value used in experiment
-
-# ## Initialize trainable parameters
-# np.random.seed(0)
-# D = np.random.rand(n, k,)
-# C = np.random.rand(k, n)
-# X = A = M.toarray()
-
-# ## Initialize D and C
-# for _ in range(1):
-#     D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
-
-# for _ in range(outiter):
-#     ## Maximize perturbation
-#     A_bar = D @ C
-#     P = np.maximum(A - A_bar / (_lambda - 1), -A)
-#     X = A + P
-#     for _ in range(initer):
-#         ## Minimize objective function
-#         D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
-
-# ## Inference
-# community = []
-# for i in range(n):
-#     comm = np.argmax(C[:,i])
-#     community.append(comm)
-
-# for i in range(num_comms):
-#     print("Community {} ".format(i), np.arange(num_nodes)[np.array(community) == i])
