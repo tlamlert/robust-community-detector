@@ -4,21 +4,20 @@
 ### TODO: This algorithm doesn't work on graph with multiple connected components
 
 import numpy as np
+from numpy import linalg
 from scipy import sparse
 from scipy.sparse.linalg import svds
-import time
 
 ## Read input from file
-# FILEPATH = "zacharys_karate_club"
+DIRECTORY = "homogenous_dataset/"
+FILEPATH = "zacharys_karate_club"
 # FILEPATH = "dolphins_social_network"
 # FILEPATH = "les_miserables"
-FILEPATH = "example"
-# FILEPATH = "example_broken"
 train_i = []
 train_j = []
 train_val = []
 
-with open(FILEPATH, "r") as file:
+with open(DIRECTORY + FILEPATH, "r") as file:
     num_nodes, num_edges, num_comms = [int(val) for val in next(file).split()]
     for line in file:
         i, j = line.split()
@@ -43,27 +42,35 @@ Output: the set of communities S = {s1, s2, · · · , sk};
 n = num_nodes
 k = num_comms
 _lambda = 2                 # value used in experiment
-initer, outiter = 500, 50   # value used in experiment
-initer, outiter = 100, 10   # value used in experiment
+initer, outiter = 500, 50   # value used in experiment'
+epsilon = 1e-16
 
 ## Initialize trainable parameters
-np.random.seed(0)
-D = np.random.rand(n, k,)
+np.random.seed(42)
+D = np.random.rand(n, k)
 C = np.random.rand(k, n)
 X = A = M.toarray()
 
-## Initialize D and C
-for _ in range(1):
-    D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
+# Initialize D and C
+for _ in range(10):
+    D = D * (X @ C.T) / (D @ C @ C.T + epsilon)
+    C = C * (D.T @ X) / (D.T @ D @ C + epsilon)
+    # D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
 
 for _ in range(outiter):
     ## Maximize perturbation
     A_bar = D @ C
-    P = np.maximum(A - A_bar / (_lambda - 1), -A)
+    P = np.maximum((A - A_bar) / (_lambda - 1), -A)
     X = A + P
     for _ in range(initer):
         ## Minimize objective function
-        D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
+        D = D * (X @ C.T) / (D @ C @ C.T + epsilon)
+        C = C * (D.T @ X) / (D.T @ D @ C + epsilon)
+        # D, C = D * (X @ C.T) / (D @ C @ C.T), C * (D.T @ X) / (D.T @ D @ C)
+
+print("P norm: ", linalg.norm(P) ** 2)
+print("X norm: ", linalg.norm(X) ** 2)
+print("Loss: ", linalg.norm(X - D @ C) ** 2 - linalg.norm(P) ** 2)
 
 ## Inference
 community = []

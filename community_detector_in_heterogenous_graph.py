@@ -6,12 +6,14 @@ import numpy as np
 from numpy import linalg
 from scipy import sparse
 from scipy.sparse.linalg import svds
+import itertools
 
 ## Read input from file
 DIRECTORY_PATH = "multiview_data_20130124/politicsie/"
 ID_FILEPATH = "politicsie.ids"
 LINK_FILEPATH = ["politicsie-follows.mtx", "politicsie-mentions.mtx", "politicsie-retweets.mtx"]
-CONTENT_FILEPATH = ["politicsie-listmerged500.mtx", "politicsie-lists500.mtx", "politicsie-tweets500.mtx"]
+CONTENT_FILEPATH = ["politicsie-lists500.mtx", "politicsie-tweets500.mtx"]
+LEBEL_FILEPATH = "politicsie.communities"
 OUTPUT_FILEPATH = "politicsie_output"
 num_comms = 7
 
@@ -37,7 +39,7 @@ for path in LINK_FILEPATH:
             train_i.append(_index[int(i)])
             train_j.append(_index[int(j)])
             train_val.append(float(k))
-        A.append(sparse.coo_matrix((train_val + train_val, (train_i + train_j, train_j + train_i)), shape=(num_users, num_users)).tocsr())
+        A.append(sparse.coo_matrix((train_val + train_val, (train_i + train_j, train_j + train_i)), shape=(num_users, num_users)).tocsr().toarray())
 
 for path in CONTENT_FILEPATH:
     train_i = []
@@ -51,7 +53,13 @@ for path in CONTENT_FILEPATH:
             train_i.append(_index[int(j)])
             train_j.append(int(i))
             train_val.append(float(k))
-        X.append(sparse.coo_matrix((train_val, (train_i, train_j)), shape=(num_users, num_features)).tocsr())
+        X.append(sparse.coo_matrix((train_val, (train_i, train_j)), shape=(num_users, num_features)).tocsr().toarray())
+
+label_comms = {}
+with open(DIRECTORY_PATH + LEBEL_FILEPATH, "r") as file:
+    for line in file:
+        comm_name, users = line.split(" ")
+        label_comms[comm_name] = [int(user) for user in users.split(",")]
 
 """
 RJNMF community detection.
@@ -63,13 +71,16 @@ Input:
     The number of iterations   initer, outier; (???)
 """
 
-# ## Initialize hyperparameters
+## Initialize hyperparameters
 p, q = len(A), len(X)
 n = num_users
 k = num_comms
-a = c = [1 for _ in range(p)]
-b = d = [1 for _ in range(q)] # default values when relative importance is unknown
-# initer, outiter = 500, 50   # value used in experiment
+# a = c = [1 for _ in range(p)]
+# b = d = [1 for _ in range(q)] # default values when relative importance is unknown
+a = [6, 3, 3]
+b = [2, 1]
+c = [4, 2, 2]
+d = [2, 1]                      # value used in experiment
 
 ## Initialize trainable parameters
 np.random.seed(42)
@@ -80,38 +91,51 @@ S = np.random.rand(n, k)
 
 ## Minimize objective function
 ## https://www.hindawi.com/journals/mpe/2016/5750645/
-for i in range(1000):
+for i in range(500):
     for t in range(p):
         # Update U
         numerator = a[t] * A[t] @ U[t] + c[t] * U[t] @ S.T @ S
-        denominator = (a[t] + c[t]) * U[t] @ U[t].T @ U[t]
+        denominator = a[t] * U[t] @ U[t].T @ U[t] + c[t] * U[t] @ U[t].T @ U[t]
         U[t] = U[t] * ((numerator / denominator) ** 0.5)
     for t in range(q):
         # Update W
-        numerator = b[t] * X[t] @ H[t] + 2 * d[t] * W[t] @ S.T @ S
-        denominator = b[t] * W[t] @ H[t].T @ H[t] + 2 * d[t] * W[t] @ W[t].T @ W[t]
-        W[t] = W[t] * ((numerator / denominator) ** 0.5)
+        W_numerator = b[t] * X[t] @ H[t] + 2 * d[t] * W[t] @ S.T @ S
+        W_denominator = b[t] * W[t] @ H[t].T @ H[t] + 2 * d[t] * W[t] @ W[t].T @ W[t]
+        W[t] = W[t] * ((W_numerator / W_denominator) ** 0.5)
         # Update H
-        numerator = X[t].T @ W[t]
-        denominator = H[t] @ W[t].T @ W[t]
-        H[t] = H[t] * ((numerator / denominator) ** 0.5)
+        H_numerator = X[t].T @ W[t]
+        H_denominator = H[t] @ W[t].T @ W[t]
+        H[t] = H[t] * ((H_numerator / H_denominator) ** 0.5)
     # Update S
-    numerator = S @ sum(c[t] * U[t].T @ U[t] for t in range(p)) + S @ sum(d[t] * W[t].T @ W[t] for r in range(q))
+    numerator = sum(c[t] * S @ U[t].T @ U[t] for t in range(p)) + sum(d[t] * S @ W[t].T @ W[t] for t in range(q))
     denominator = (sum(c) + sum(d)) * S @ S.T @ S
     S = S * ((numerator / denominator) ** 0.5)
 
     if (i + 1) % 100 == 0:
-        loss = (sum(a[t] * linalg.norm(A[t] - U[t] @ U[t].T) for t in range(p))
-                + sum(b[t] * linalg.norm(X[t] - W[t] @ H[t].T) for t in range(q))
-                + sum(c[t] * linalg.norm(U[t].T @ U[t] - S.T @ S) for t in range(p))
-                + sum(d[t] * linalg.norm(W[t].T @ W[t] - S.T @ S) for t in range(q)))
+        loss = (sum(a[t] * linalg.norm(A[t] - U[t] @ U[t].T) ** 2 for t in range(p))
+                + sum(b[t] * linalg.norm(X[t] - W[t] @ H[t].T) ** 2 for t in range(q))
+                + sum(c[t] * linalg.norm(U[t].T @ U[t] - S.T @ S) ** 2 for t in range(p))
+                + sum(d[t] * linalg.norm(W[t].T @ W[t] - S.T @ S) ** 2 for t in range(q)))
         print("training loss after {} iterations: {}".format(i + 1, loss))
+        # print(sum(a[t] * linalg.norm(A[t] - U[t] @ U[t].T) ** 2 for t in range(p)))
+        # print(sum(c[t] * linalg.norm(U[t].T @ U[t] - S.T @ S) ** 2 for t in range(p)))
+
+print(linalg.norm(A[0] - U[0] @ U[0].T) ** 2)
+print(linalg.norm(A[0] - S @ S.T) ** 2)
 
 ## Inference
 community = [[] for _ in range(num_comms)]
 for i in range(n):
     comm = np.argmax(S[i, :])
     community[comm].append(user_ids[i])
+
+accuracy = 0
+for perm in (itertools.permutations(range(num_comms))):
+    num_correct = 0
+    for i, comm in enumerate(label_comms):
+        num_correct += len(set(community[i]) & set(label_comms[comm]))
+    accuracy = max(accuracy, num_correct / num_users)
+print("Model accuracy: {}".format(accuracy))
 
 with open(OUTPUT_FILEPATH, "w") as file:
     for i in range(num_comms):
