@@ -8,25 +8,29 @@ from numpy import linalg
 from scipy import sparse
 import networkx as nx
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 ## Read input from file
 DIRECTORY = "homogenous_dataset/"
 # FILEPATH = "zacharys_karate_club"
-FILEPATH = "dolphins_social_network"
-# FILEPATH = "les_miserables"
+# FILEPATH = "dolphins_social_network"
+FILEPATH = "les_miserables"
+OUTPATH = "present_1"
 train_i = []
 train_j = []
 train_val = []
 
-init_edges = []
 with open(DIRECTORY + FILEPATH, "r") as file:
     num_nodes, num_edges, num_comms = [int(val) for val in next(file).split()]
-    for line in file:
+    for line in tqdm(file):
         i, j = line.split()
-        train_i.append(int(i))
-        train_j.append(int(j))
-        init_edges.append((int(i), int(j)))
+        train_i.append(i)
+        train_j.append(j)
         train_val.append(1)
+    keys = set(train_i + train_j)
+    coding = {k: v for k, v in zip(keys, range(len(keys)))}
+    train_i = [coding[v] for v in train_i]
+    train_j = [coding[v] for v in train_j]
 
 def construct_matrix(i, j, val, dropout_rate=0):
     num_edges = len(i)
@@ -37,9 +41,8 @@ def construct_matrix(i, j, val, dropout_rate=0):
     edges = [(int(x), int(y)) for x, y in zip(i, j)]
     return edges, sparse.coo_matrix((val + val, (i + j, j + i)), shape=(num_nodes, num_nodes)).tocsr()
 
-edges, M_original = construct_matrix(train_i, train_j, train_val, dropout_rate=0)
-edges, M = construct_matrix(train_i, train_j, train_val, dropout_rate=0.10)
-edges = init_edges
+init_edges, M_original = construct_matrix(train_i, train_j, train_val, dropout_rate=0)
+edges, M = construct_matrix(train_i, train_j, train_val, dropout_rate=0.20)
 
 """
 Robust nonnegative matrix factorization using L21-norm
@@ -55,13 +58,13 @@ Output: the set of communities S = {s1, s2, · · · , sk};
 ## Initialize hyperparameters
 n = num_nodes
 k = num_comms
-num_iter = 5000
+num_iter = 100
 epsilon = 1e-16
 X = M.toarray()
 X_o = M_original.toarray()
 
 ## Initialize trainable parameters
-# np.random.seed(42)
+np.random.seed(10)
 F_true = np.random.rand(n, k)
 G_true = np.random.rand(k, n)
 F_basic = np.random.rand(n, k)
@@ -69,7 +72,7 @@ G_basic = np.random.rand(k, n)
 F = np.random.rand(n, k)
 G = np.random.rand(k, n)
 
-for i in range(num_iter):
+for i in tqdm(range(num_iter)):
     ## Basic NMF on original graph
     F_true = F_true * (X_o @ G_true.T) / (F_true @ G_true @ G_true.T + epsilon)
     G_true = G_true * (F_true.T @ X_o) / (F_true.T @ F_true @ G_true + epsilon)
@@ -92,12 +95,25 @@ for i in range(num_iter):
 true_community = [[] for _ in range(num_comms)]
 basic_community = [[] for _ in range(num_comms)]
 robust_community = [[] for _ in range(num_comms)]
+true_node = []
+basic_node = []
+robust_node = []
 for i in range(n):
     true_community[np.argmax(F_true[i, :])].append(i)
     basic_community[np.argmax(F_basic[i, :])].append(i)
     robust_community[np.argmax(F[i, :])].append(i)
+    true_node.append(np.argmax(F_true[i, :]))
+    basic_node.append(np.argmax(F_basic[i, :]))
+    robust_node.append(np.argmax(F[i, :]))
 
-def visualize_community(community, filename):
+basic_acc = max(np.mean(np.asarray(true_node) == np.asarray(basic_node)),
+                np.mean(np.asarray(true_node) == (1 - np.asarray(basic_node))))
+robust_acc = max(np.mean(np.asarray(true_node) == np.asarray(robust_node)),
+                 np.mean(np.asarray(true_node) == (1 - np.asarray(robust_node))))
+print("Basic NMF accuracy: {}".format(basic_acc))
+print("Robust NMF accuracy: {}".format(robust_acc))
+
+def visualize_community(edges, community, filename):
     ## Visualization
     rng : np.random.Generator = np.random.default_rng(seed=4237502)
 
@@ -116,6 +132,6 @@ def visualize_community(community, filename):
     # plt.show()
     plt.savefig(filename)
 
-visualize_community(true_community, "graphics/" + FILEPATH + "_true_community")
-visualize_community(basic_community, "graphics/" + FILEPATH + "_basic_community")
-visualize_community(robust_community, "graphics/" + FILEPATH + "_robust_community")
+visualize_community(init_edges, true_community, "graphics/" + OUTPATH + "_true_community")
+visualize_community(edges, basic_community, "graphics/" + OUTPATH + "_basic_community")
+visualize_community(edges, robust_community, "graphics/" + OUTPATH + "_robust_community")

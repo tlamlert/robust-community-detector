@@ -11,8 +11,8 @@ from scipy.sparse.linalg import svds
 ## Read input from file
 DIRECTORY = "homogenous_dataset/"
 # FILEPATH = "zacharys_karate_club"
-# FILEPATH = "dolphins_social_network"
-FILEPATH = "les_miserables"
+FILEPATH = "dolphins_social_network"
+# FILEPATH = "les_miserables"
 train_i = []
 train_j = []
 train_val = []
