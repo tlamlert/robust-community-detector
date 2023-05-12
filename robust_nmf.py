@@ -6,31 +6,24 @@
 import numpy as np
 from numpy import linalg
 from scipy import sparse
-import networkx as nx
-from matplotlib import pyplot as plt
-from tqdm import tqdm
+from scipy.sparse.linalg import svds
 
 ## Read input from file
 DIRECTORY = "homogenous_dataset/"
 # FILEPATH = "zacharys_karate_club"
-# FILEPATH = "dolphins_social_network"
-FILEPATH = "les_miserables"
-OUTPATH = "present_1"
+FILEPATH = "dolphins_social_network"
+# FILEPATH = "les_miserables"
 train_i = []
 train_j = []
 train_val = []
 
 with open(DIRECTORY + FILEPATH, "r") as file:
     num_nodes, num_edges, num_comms = [int(val) for val in next(file).split()]
-    for line in tqdm(file):
+    for line in file:
         i, j = line.split()
-        train_i.append(i)
-        train_j.append(j)
+        train_i.append(int(i))
+        train_j.append(int(j))
         train_val.append(1)
-    keys = set(train_i + train_j)
-    coding = {k: v for k, v in zip(keys, range(len(keys)))}
-    train_i = [coding[v] for v in train_i]
-    train_j = [coding[v] for v in train_j]
 
 def construct_matrix(i, j, val, dropout_rate=0):
     num_edges = len(i)
@@ -38,100 +31,58 @@ def construct_matrix(i, j, val, dropout_rate=0):
     val = [val[idx] for idx in range(len(mask)) if mask[idx]]
     i = [i[idx] for idx in range(len(mask)) if mask[idx]]
     j = [j[idx] for idx in range(len(mask)) if mask[idx]]
-    edges = [(int(x), int(y)) for x, y in zip(i, j)]
-    return edges, sparse.coo_matrix((val + val, (i + j, j + i)), shape=(num_nodes, num_nodes)).tocsr()
+    return sparse.coo_matrix((val + val, (i + j, j + i)), shape=(num_nodes, num_nodes)).tocsr()
 
-init_edges, M_original = construct_matrix(train_i, train_j, train_val, dropout_rate=0)
-edges, M = construct_matrix(train_i, train_j, train_val, dropout_rate=0.20)
+M = construct_matrix(train_i, train_j, train_val, dropout_rate=0)
 
 """
-Robust nonnegative matrix factorization using L21-norm
-https://dl.acm.org/doi/pdf/10.1145/2063576.2063676
+Optimization algorithm of EA2NMF
 Input:
     The adjacency matrix A;
     The set of nodes V;
     The hyper-parameter λ;
     The number of communities k;
+    The numbers of iterations initer, outiter;
 Output: the set of communities S = {s1, s2, · · · , sk};
 """
 
 ## Initialize hyperparameters
 n = num_nodes
 k = num_comms
-num_iter = 100
+_lambda = 2                 # value used in experiment
+initer, outiter = 500, 50   # value used in experiment'
 epsilon = 1e-16
-X = M.toarray()
-X_o = M_original.toarray()
 
 ## Initialize trainable parameters
-np.random.seed(10)
-F_true = np.random.rand(n, k)
-G_true = np.random.rand(k, n)
-F_basic = np.random.rand(n, k)
-G_basic = np.random.rand(k, n)
-F = np.random.rand(n, k)
-G = np.random.rand(k, n)
+np.random.seed(42)
+D = np.random.rand(n, k)
+C = np.random.rand(k, n)
+X = A = M.toarray()
 
-for i in tqdm(range(num_iter)):
-    ## Basic NMF on original graph
-    F_true = F_true * (X_o @ G_true.T) / (F_true @ G_true @ G_true.T + epsilon)
-    G_true = G_true * (F_true.T @ X_o) / (F_true.T @ F_true @ G_true + epsilon)
+# Initialize D and C
+for _ in range(10):
+    D = D * (X @ C.T) / (D @ C @ C.T + epsilon)
+    C = C * (D.T @ X) / (D.T @ D @ C + epsilon)
 
-    ## Basic NMF
-    F_basic = F_basic * (X @ G_basic.T) / (F_basic @ G_basic @ G_basic.T + epsilon)
-    G_basic = G_basic * (F_basic.T @ X) / (F_basic.T @ F_basic @ G_basic + epsilon)
+for _ in range(outiter):
+    ## Maximize perturbation
+    A_bar = D @ C
+    P = np.maximum((A - A_bar) / (_lambda - 1), -A)
+    X = A + P
+    for _ in range(initer):
+        ## Minimize objective function
+        D = D * (X @ C.T) / (D @ C @ C.T + epsilon)
+        C = C * (D.T @ X) / (D.T @ D @ C + epsilon)
 
-    ## Robust NMF
-    D = np.diag(1 / ((X - F @ G) ** 2 + epsilon).sum(axis=1) ** 0.5)
-    F = F * (X @ D @ G.T) / (F @ G @ D @ G.T + epsilon)
-    D = np.diag(1 / ((X - F @ G) ** 2 + epsilon).sum(axis=1) ** 0.5)
-    G = G * (F.T @ X @ D) / (F.T @ F @ G @ D + epsilon)
-
-    if (i + 1) % 1000 == 0:
-        loss = linalg.norm(X - F @ G) ** 2
-        print("training loss after {} iterations: {}".format(i + 1, loss))
+print("P norm: ", linalg.norm(P) ** 2)
+print("X norm: ", linalg.norm(X) ** 2)
+print("Loss: ", linalg.norm(X - D @ C) ** 2 - linalg.norm(P) ** 2)
 
 ## Inference
-true_community = [[] for _ in range(num_comms)]
-basic_community = [[] for _ in range(num_comms)]
-robust_community = [[] for _ in range(num_comms)]
-true_node = []
-basic_node = []
-robust_node = []
+community = []
 for i in range(n):
-    true_community[np.argmax(F_true[i, :])].append(i)
-    basic_community[np.argmax(F_basic[i, :])].append(i)
-    robust_community[np.argmax(F[i, :])].append(i)
-    true_node.append(np.argmax(F_true[i, :]))
-    basic_node.append(np.argmax(F_basic[i, :]))
-    robust_node.append(np.argmax(F[i, :]))
+    comm = np.argmax(C[:,i])
+    community.append(comm)
 
-basic_acc = max(np.mean(np.asarray(true_node) == np.asarray(basic_node)),
-                np.mean(np.asarray(true_node) == (1 - np.asarray(basic_node))))
-robust_acc = max(np.mean(np.asarray(true_node) == np.asarray(robust_node)),
-                 np.mean(np.asarray(true_node) == (1 - np.asarray(robust_node))))
-print("Basic NMF accuracy: {}".format(basic_acc))
-print("Robust NMF accuracy: {}".format(robust_acc))
-
-def visualize_community(edges, community, filename):
-    ## Visualization
-    rng : np.random.Generator = np.random.default_rng(seed=4237502)
-
-    G = nx.Graph(edges)
-    springpos = nx.spring_layout(nx.Graph(init_edges), seed=3113794652)
-    colorlist = ["tab:red", "tab:blue", "tab:orange", "tab:green", "tab:pink", "tab:purple", "tab:gray", "tab:brown", "tab:olive", "tab:cyan"]
-    pos = {}
-    for i in range(num_comms):
-        for node in community[i]:
-            pos[node] = (100 * np.math.cos(2*i*np.math.pi / num_comms) + 20*rng.random(), 100 * np.math.sin(2*i*np.math.pi / num_comms) + 20*rng.random())
-        nx.draw_networkx_nodes(G, springpos, node_size=25, nodelist=community[i], node_color=colorlist[i])
-
-    nx.draw_networkx_edges(G, springpos, width=0.2, alpha=0.2)
-    plt.tight_layout()
-    plt.axis("off")
-    # plt.show()
-    plt.savefig(filename)
-
-visualize_community(init_edges, true_community, "graphics/" + OUTPATH + "_true_community")
-visualize_community(edges, basic_community, "graphics/" + OUTPATH + "_basic_community")
-visualize_community(edges, robust_community, "graphics/" + OUTPATH + "_robust_community")
+for i in range(num_comms):
+    print("Community {} ".format(i), np.arange(num_nodes)[np.array(community) == i])

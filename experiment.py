@@ -1,214 +1,140 @@
-### Community Detection Algorithm
-### Implementation based on "Towards Robust Community Detection via Extreme Adversarial Attacks"
-### https://ieeexplore.ieee.org/abstract/document/9956362
-### TODO: This algorithm doesn't work on graph with multiple connected components
-
 import numpy as np
-from numpy import linalg
+import pandas as pd
 from scipy import sparse
-from scipy.sparse.linalg import svds
+from tqdm import tqdm
 import networkx as nx
 from matplotlib import pyplot as plt
-from tqdm import tqdm
-from sklearn import metrics
-from scipy.optimize import linear_sum_assignment
 
-DIRECTORY = "datasets/"
+from models import l2_NMF, l21_NMF
+from metrics import evaluate_clusters
 
-DATASET_NAME = "sp_school_day_1"
-
-## Read input from file
-train_i = []
-train_j = []
-train_val = []
-with open(DIRECTORY + DATASET_NAME + ".edges", "r") as file:
-    num_nodes, num_edges, num_comms = [int(val) for val in next(file).split()]
-    for line in file:
-        i, j = line.split()
-        train_i.append(int(i))
-        train_j.append(int(j))
-        train_val.append(1)
-    keys = set(train_i + train_j)
-    coding = {k: v for k, v in zip(keys, range(len(keys)))}
-    train_i = [coding[v] for v in train_i]
-    train_j = [coding[v] for v in train_j]
-
-# Read ground truth labels if a label file exists
-try:
-    with open(DIRECTORY + DATASET_NAME + ".labels", "r") as file:
+def read_input(file_path):
+    ## Read edges and metadata from file
+    with open(file_path + ".edges", "r") as file:
+        num_nodes, num_edges, num_comms = [int(val) for val in next(file).split()]
+        edges = []
+        for line in file:
+            i, j = line.split()
+            edges.append((int(i), int(j)))
+    
+    ## Read ground truth labels from file
+    with open(file_path + ".labels", "r") as file:
         true_comm = [None for _ in range(num_nodes)]
         for line in file:
             node_id, label = line.split()
             true_comm[int(node_id)] = int(label)
-except:
-    true_comm = None
+    
+    return num_nodes, num_edges, num_comms, edges, true_comm
 
-def construct_matrix(i, j, val, dropout_rate=0):
-    num_edges = len(i)
-    mask = np.random.rand(num_edges) > dropout_rate
-    val = [v for v, m in zip(val, mask) if m]
-    i = [v for v, m in zip(i, mask) if m]
-    j = [v for v, m in zip(j, mask) if m]
-    edges = [(int(x), int(y)) for x, y in zip(i, j)]
-    return edges, sparse.coo_matrix((val + val, (i + j, j + i)), shape=(num_nodes, num_nodes)).tocsr()
+def construct_matrix(num_nodes, edges, dropout_rate=0):
+    ## Construct a sparse matrix from input edges
+    mask = np.random.rand(len(edges)) > dropout_rate
+    remaining = [v for v, m in zip(edges, mask) if m]
+    i, j = [v[0] for v in remaining], [v[1] for v in remaining]
+    M = sparse.coo_matrix(([1] * 2 * len(remaining), (i + j, j + i)), shape=(num_nodes, num_nodes)).tocsr()
+    return remaining, M
 
-def run_experiment(true_comm, dropout_rate):
-    ## Construct dropped-out matrix for experiment
-    orig_edges, orig_M = construct_matrix(train_i, train_j, train_val, dropout_rate=0)
-    edges, M = construct_matrix(train_i, train_j, train_val, dropout_rate=dropout_rate)
+def visualize_community(edges, label_list, filename):
+    ## Preprocess
+    to_community = lambda labels: [np.argwhere(labels == comm).flatten() for comm in set(labels)]
+    label_list = [to_community(label) for label in label_list]
 
-    """
-    Robust nonnegative matrix factorization using L21-norm
-    https://dl.acm.org/doi/pdf/10.1145/2063576.2063676
-    Input:
-        The adjacency matrix A;
-        The set of nodes V;
-        The hyper-parameter λ;
-        The number of communities k;
-    Output: the set of communities S = {s1, s2, · · · , sk};
-    """
+    ## Visualization
+    colorlist = ["tab:red", "tab:blue", "tab:orange", "tab:green", "tab:pink", "tab:purple", "tab:gray", "tab:brown", "tab:olive", "tab:cyan"]
+    rng : np.random.Generator = np.random.default_rng(seed=42)
 
-    ## Initialize hyperparameters
-    n = num_nodes
-    k = num_comms
-    num_iter = 2000
-    epsilon = 1e-16
-    convergence_cri = 1e-5 ## 1e-7
+    def visualize_graph(edges, community):
+        G = nx.Graph(edges)
+        springpos = nx.spring_layout(nx.Graph(edges), seed=42)
+        for i, comm in enumerate(community):
+            nx.draw_networkx_nodes(G, springpos, node_size=25, nodelist=comm, node_color=colorlist[i])
+        nx.draw_networkx_edges(G, springpos, width=0.2, alpha=0.2)
+
+    num_graphs = len(label_list)
+    for i, labels in enumerate(label_list):
+        plt.subplot(100 + num_graphs * 10 + i + 1)
+        visualize_graph(edges, labels)
+
+    plt.savefig(filename)
+    plt.close()
+
+def run_experiment(num_nodes, num_comms, edges, true_comm, dropout_rate, return_losses=False, filename=None):
+    ## Construct prunned matrix for experiment
+    true_comm = np.asarray(true_comm)
+    _, M = construct_matrix(num_nodes, edges, dropout_rate=dropout_rate)
     X = M.toarray()
 
-    ## Initialize trainable parameters
-    F_basic = np.random.rand(n, k)
-    G_basic = np.random.rand(k, n)
-    F = F_basic.copy()
-    G = G_basic.copy()
+    ## Run standard and robust NMF on the prunned input graph
+    basic_pred, basic_losses = l2_NMF(X, num_comms)
+    robust_pred, robust_losses = l21_NMF(X, num_comms)
 
-    basic_losses = []
-    robust_losses = []
+    ## Evaluate predictions
+    basic_metrics, basic_mapping = evaluate_clusters(true_comm, basic_pred, edges, num_comms)
+    robust_metrics, robust_mapping = evaluate_clusters(true_comm, robust_pred, edges, num_comms)
 
-    if not true_comm:
-        ## Standard NMF on original graph
-        X_o = orig_M.toarray()
-        F_true = np.random.rand(n, k)
-        G_true = np.random.rand(k, n)
-        
-        for i in range(num_iter):
-            F_true = F_true * (X_o @ G_true.T) / (F_true @ G_true @ G_true.T + epsilon)
-            G_true = G_true * (F_true.T @ X_o) / (F_true.T @ F_true @ G_true + epsilon)
-        
-        true_comm = []
-        for i in range(n):
-            true_comm.append(np.argmax(F_true[i, :]))
+    basic_metrics["num_iters"] = len(basic_losses)
+    robust_metrics["num_iters"] = len(robust_losses)
+    if return_losses:
+        basic_metrics["losses"] = basic_losses
+        robust_metrics["losses"] = robust_losses
 
-    # for i in tqdm(range(num_iter)):
-    for i in range(num_iter):
-        ## Standard NMF
-        F_basic = F_basic * (X @ G_basic.T) / (F_basic @ G_basic @ G_basic.T + epsilon)
-        G_basic = G_basic * (F_basic.T @ X) / (F_basic.T @ F_basic @ G_basic + epsilon)
-
-        l2_loss = linalg.norm(X - F_basic @ G_basic, 'fro')
-        basic_losses.append(l2_loss)
-        
-        if i > 0:
-            prev_loss = basic_losses[-2]
-            converge = ((prev_loss - l2_loss) / prev_loss ) < convergence_cri
-            if converge:
-                break
-
-    # for i in tqdm(range(num_iter)):
-    for i in range(num_iter):
-        ## Robust NMF
-        D = np.diag(1 / ((X - F @ G) ** 2 + epsilon).sum(axis=1) ** 0.5)
-        F = F * (X @ D @ G.T) / (F @ G @ D @ G.T + epsilon)
-        D = np.diag(1 / ((X - F @ G) ** 2 + epsilon).sum(axis=1) ** 0.5)
-        G = G * (F.T @ X @ D) / (F.T @ F @ G @ D + epsilon)
-
-        l21_loss = 0
-        for row in X - F @ G:
-            l21_loss += linalg.norm(row)
-        robust_losses.append(l21_loss)
-
-        if i > 0:
-            prev_loss = robust_losses[-2]
-            converge = ((prev_loss - l21_loss) / prev_loss) < convergence_cri
-            if converge:
-                break
-
-    ## Inference
-    basic_comm = []
-    robust_comm = []
-    for i in range(n):
-        basic_comm.append(np.argmax(F_basic[i]))
-        robust_comm.append(np.argmax(F[i]))
+    ## Visualization
+    if filename:
+        ## Align y_pred to y_true
+        basic_pred = [basic_mapping[v] for v in basic_pred]
+        robust_pred = [robust_mapping[v] for v in robust_pred]
+        label_list = [true_comm, basic_pred, robust_pred]
+        visualize_community(edges, label_list, filename + "_{}".format(int(dropout_rate * 100)))
     
-    ## Evaluation: Clutering Accuracy
-    def cluster_acc(y_true, y_pred):
-        num_comms = len(set(y_true + y_pred))
-        w = np.zeros((num_comms, num_comms))
-        for i in range(len(y_pred)):
-            w[y_pred[i], y_true[i]] += 1
-        row_ind, col_ind = linear_sum_assignment(w.max() - w)
-        return sum([w[i, j] for i, j in zip(row_ind, col_ind)]) / len(y_pred)
+    return basic_metrics, robust_metrics
 
-    basic_acc = cluster_acc(true_comm, basic_comm)
-    robust_acc = cluster_acc(true_comm, robust_comm)
+def run_experiment_on_dataset(dataset, visualization_on=False):
+    # Filepath config
+    DATA_DIRECTORY = "datasets/"
+    GRAPHICS_DIRECTORY = "graphics/"
+    OUTPUT_DIRECTORY = "experiment_results/"
 
-    ## Evaluation: Rand index
-    # basic_acc = metrics.rand_score(true_comm, basic_comm)
-    # robust_acc = metrics.rand_score(true_comm, robust_comm)
+    # Read input for one dataset
+    num_nodes, num_edges, num_comms, edges, true_comm = read_input(DATA_DIRECTORY + dataset)
 
-    ## Evaluation: Conductance
-    def conductance(edges, y_pred):
-        conductances = []
-        for s in set(y_pred):
-            cut_size, s_vol, s_bar_vol = 0, 0, 0
-            for u, v in edges:
-                if y_pred[u] == s and y_pred[v] == s:
-                    s_vol += 2
-                elif y_pred[u] == s or y_pred[v] == s:
-                    cut_size += 1
-                    s_vol += 1
-                    s_bar_vol += 1
-                else:
-                    s_bar_vol += 2
-            s_cond = cut_size / min(s_vol, s_bar_vol)
-            conductances.append(s_cond)
-        return min(conductances)
-    
-    basic_cond = conductance(orig_edges, basic_comm)
-    robust_cond = conductance(orig_edges, robust_comm)
+    for rate in DROPOUT_RATES:
+        basic_metrics, robust_metrics = [], []
+        for _ in tqdm(range(NUM_EXPERIMENT), leave=False):
+            b_metrics, r_metrics = run_experiment(num_nodes, num_comms, edges, true_comm, rate)
+            basic_metrics.append(b_metrics)
+            robust_metrics.append(r_metrics)
+        
+        # Visualization
+        if visualization_on:
+            _, _ = run_experiment(num_nodes, num_comms, edges, true_comm, rate, filename=(GRAPHICS_DIRECTORY + dataset))
 
-    return basic_acc, robust_acc, basic_cond, robust_cond, basic_losses, robust_losses
+        # Construct df
+        average = lambda dict_list: {key: sum(d[key] for d in dict_list) / len(dict_list) for key in dict_list[0]}
+        basic_metrics = average(basic_metrics)
+        robust_metrics = average(robust_metrics)
+        model_names = ["l2_NMF", "L21_NMF"]
+        metrics_pd = pd.DataFrame.from_dict([basic_metrics, robust_metrics]).T.rename(columns=lambda x: model_names[x])
+
+        # # Print to terminal
+        # print("\nExperiment result (dropout_rate = {:.2f})".format(rate))
+        # print(metrics_pd)
+
+        # Save to files
+        metrics_pd.to_csv(OUTPUT_DIRECTORY + dataset + "_{}".format(int(rate * 100)))
 
 ##### Experiment Configuration #####
 DROPOUT_RATES = [0.05, 0.10, 0.20, 0.40]
 NUM_EXPERIMENT = 100
-for rate in DROPOUT_RATES:
-    basic_acc = []
-    robust_acc = []
-    basic_cond = []
-    robust_cond = []
-    basic_iter = []
-    robust_iter = []
 
-    for _ in tqdm(range(NUM_EXPERIMENT)):
-    # for _ in range(NUM_EXPERIMENT):
-        b_acc, r_acc, b_cond, r_cond, b_losses, r_losses= run_experiment(true_comm, rate)
-        basic_acc.append(b_acc)
-        robust_acc.append(r_acc)
-        basic_cond.append(b_cond)
-        robust_cond.append(r_cond)
-        basic_iter.append(len(b_losses))
-        robust_iter.append(len(r_losses))
+## Option 1: run experiment on all datasets
+SMALL_DATASETS = ["dolphins", "football", "karate", "polbooks", "sp_school_day_1", "sp_school_day_2"]
+# LARGE_DATASETS = ["cora", "eu-core", "eurosis", "polblogs"]
+# ALL_DATASETS = ["cora", "dolphins", "eu-core", "eurosis", "football", "karate", "polblogs", "polbooks", "sp_school_day_1", "sp_school_day_2"]
+for dataset in SMALL_DATASETS:
+    print("Running experiment on {}...".format(dataset))
+    run_experiment_on_dataset(dataset)
 
-    print("##### Experiment result (dropout_rate = {:.2f}) #####".format(rate))
-    print("Basic NMF accuracy: {:.4f}".format(np.mean(np.asarray(basic_acc))))
-    print("Robust NMF accuracy: {:.4f}".format(np.mean(np.asarray(robust_acc))))
-    print()
-
-    print("Basic NMF conductance: {:.4f}".format(np.mean(np.asarray(basic_cond))))
-    print("Robust NMF conductance: {:.4f}".format(np.mean(np.asarray(robust_cond))))
-    print()
-
-    print("Basic NMF #iterations before convergence: {:.4f}".format(np.mean(np.asarray(basic_iter))))
-    print("Robust NMF #iterations before convergence: {:.4f}".format(np.mean(np.asarray(robust_iter))))
-    print()
+# ## Option 2: run experiment on one dataset
+# DATASET_NAME = "polbooks"
+# VISUALIZATION_ON = False
+# run_experiment_on_dataset(DATASET_NAME, VISUALIZATION_ON)
