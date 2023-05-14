@@ -1,7 +1,3 @@
-### Community Detection Algorithm
-### Implementation based on "Towards Robust Community Detection via Extreme Adversarial Attacks"
-### https://ieeexplore.ieee.org/abstract/document/9956362
-
 import numpy as np
 from numpy import linalg
 from scipy import sparse

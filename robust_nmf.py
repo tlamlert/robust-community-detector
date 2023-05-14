@@ -1,7 +1,6 @@
 ### Community Detection Algorithm
 ### Implementation based on "Towards Robust Community Detection via Extreme Adversarial Attacks"
 ### https://ieeexplore.ieee.org/abstract/document/9956362
-### TODO: This algorithm doesn't work on graph with multiple connected components
 
 import numpy as np
 from numpy import linalg

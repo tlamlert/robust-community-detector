@@ -65,18 +65,14 @@ def run_experiment(num_nodes, num_comms, edges, true_comm, dropout_rate, return_
     X = M.toarray()
 
     ## Run standard and robust NMF on the prunned input graph
-    basic_pred, basic_losses = l2_NMF(X, num_comms)
-    robust_pred, robust_losses = l21_NMF(X, num_comms)
+    basic_pred, b_metrics = l2_NMF(X, num_comms, return_losses=return_losses)
+    robust_pred, r_metrics = l21_NMF(X, num_comms, return_losses=return_losses)
 
     ## Evaluate predictions
     basic_metrics, basic_mapping = evaluate_clusters(true_comm, basic_pred, edges, num_comms)
     robust_metrics, robust_mapping = evaluate_clusters(true_comm, robust_pred, edges, num_comms)
-
-    basic_metrics["num_iters"] = len(basic_losses)
-    robust_metrics["num_iters"] = len(robust_losses)
-    if return_losses:
-        basic_metrics["losses"] = basic_losses
-        robust_metrics["losses"] = robust_losses
+    basic_metrics.update(b_metrics)
+    robust_metrics.update(r_metrics)
 
     ## Visualization
     if filename:
@@ -88,7 +84,7 @@ def run_experiment(num_nodes, num_comms, edges, true_comm, dropout_rate, return_
     
     return basic_metrics, robust_metrics
 
-def run_experiment_on_dataset(dataset, visualization_on=False):
+def run_experiment_on_dataset(dataset, visualization_on=False, print_to_terminal=True, save_to_file=False):
     # Filepath config
     DATA_DIRECTORY = "datasets/"
     GRAPHICS_DIRECTORY = "graphics/"
@@ -106,7 +102,7 @@ def run_experiment_on_dataset(dataset, visualization_on=False):
         
         # Visualization
         if visualization_on:
-            _, _ = run_experiment(num_nodes, num_comms, edges, true_comm, rate, filename=(GRAPHICS_DIRECTORY + dataset))
+            _= run_experiment(num_nodes, num_comms, edges, true_comm, rate, filename=(GRAPHICS_DIRECTORY + dataset))
 
         # Construct df
         average = lambda dict_list: {key: sum(d[key] for d in dict_list) / len(dict_list) for key in dict_list[0]}
@@ -115,26 +111,28 @@ def run_experiment_on_dataset(dataset, visualization_on=False):
         model_names = ["l2_NMF", "L21_NMF"]
         metrics_pd = pd.DataFrame.from_dict([basic_metrics, robust_metrics]).T.rename(columns=lambda x: model_names[x])
 
-        # # Print to terminal
-        # print("\nExperiment result (dropout_rate = {:.2f})".format(rate))
-        # print(metrics_pd)
+        # Print to terminal
+        if print_to_terminal:
+            print("\nExperiment result (dropout_rate = {:.2f})".format(rate))
+            print(metrics_pd)
 
         # Save to files
-        metrics_pd.to_csv(OUTPUT_DIRECTORY + dataset + "_{}".format(int(rate * 100)))
+        if save_to_file:
+            metrics_pd.to_csv(OUTPUT_DIRECTORY + dataset + "_{}".format(int(rate * 100)))
 
 ##### Experiment Configuration #####
-DROPOUT_RATES = [0.05, 0.10, 0.20, 0.40]
+DROPOUT_RATES = [0.10, 0.20, 0.40]
 NUM_EXPERIMENT = 100
+VISUALIZATION_ON = False
 
-## Option 1: run experiment on all datasets
-SMALL_DATASETS = ["dolphins", "football", "karate", "polbooks", "sp_school_day_1", "sp_school_day_2"]
-# LARGE_DATASETS = ["cora", "eu-core", "eurosis", "polblogs"]
-# ALL_DATASETS = ["cora", "dolphins", "eu-core", "eurosis", "football", "karate", "polblogs", "polbooks", "sp_school_day_1", "sp_school_day_2"]
-for dataset in SMALL_DATASETS:
-    print("Running experiment on {}...".format(dataset))
-    run_experiment_on_dataset(dataset)
+# ## Option 1: run experiment on all datasets
+# SMALL_DATASETS = ["dolphins", "football", "karate", "polbooks", "sp_school_day_1", "sp_school_day_2"]
+# # LARGE_DATASETS = ["cora", "eu-core", "eurosis", "polblogs"]
+# # ALL_DATASETS = ["cora", "dolphins", "eu-core", "eurosis", "football", "karate", "polblogs", "polbooks", "sp_school_day_1", "sp_school_day_2"]
+# for dataset in SMALL_DATASETS:
+#     print("Running experiment on {}...".format(dataset))
+#     run_experiment_on_dataset(dataset, VISUALIZATION_ON, visualization_on=False, print_to_terminal=True, save_to_file=False):)
 
-# ## Option 2: run experiment on one dataset
-# DATASET_NAME = "polbooks"
-# VISUALIZATION_ON = False
-# run_experiment_on_dataset(DATASET_NAME, VISUALIZATION_ON)
+## Option 2: run experiment on one dataset
+DATASET_NAME = "sp_school_day_1"
+run_experiment_on_dataset(DATASET_NAME, VISUALIZATION_ON)
