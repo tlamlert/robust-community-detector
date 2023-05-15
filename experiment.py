@@ -108,7 +108,7 @@ def run_experiment_on_dataset(dataset, visualization_on=False, print_to_terminal
         average = lambda dict_list: {key: sum(d[key] for d in dict_list) / len(dict_list) for key in dict_list[0]}
         basic_metrics = average(basic_metrics)
         robust_metrics = average(robust_metrics)
-        model_names = ["l2_NMF", "L21_NMF"]
+        model_names = ["L21_NMF", "L2_NMF"]
         metrics_pd = pd.DataFrame.from_dict([basic_metrics, robust_metrics]).T.rename(columns=lambda x: model_names[x])
 
         # Print to terminal
@@ -123,16 +123,16 @@ def run_experiment_on_dataset(dataset, visualization_on=False, print_to_terminal
 ##### Experiment Configuration #####
 DROPOUT_RATES = [0.10, 0.20, 0.40]
 NUM_EXPERIMENT = 100
-VISUALIZATION_ON = False
 
 # ## Option 1: run experiment on all datasets
 # SMALL_DATASETS = ["dolphins", "football", "karate", "polbooks", "sp_school_day_1", "sp_school_day_2"]
-# # LARGE_DATASETS = ["cora", "eu-core", "eurosis", "polblogs"]
-# # ALL_DATASETS = ["cora", "dolphins", "eu-core", "eurosis", "football", "karate", "polblogs", "polbooks", "sp_school_day_1", "sp_school_day_2"]
-# for dataset in SMALL_DATASETS:
-#     print("Running experiment on {}...".format(dataset))
-#     run_experiment_on_dataset(dataset, VISUALIZATION_ON, visualization_on=False, print_to_terminal=True, save_to_file=False):)
+LARGE_DATASETS = ["cora", "eu-core", "eurosis", "polblogs"]
+# ALL_DATASETS = ["cora", "dolphins", "eu-core", "eurosis", "football", "karate", "polblogs", "polbooks", "sp_school_day_1", "sp_school_day_2"]
+for dataset in ["cora", "eurosis", "polblogs"]:
+    print("Running experiment on {}...".format(dataset))
+    run_experiment_on_dataset(dataset, visualization_on=False, print_to_terminal=True, save_to_file=True)
 
-## Option 2: run experiment on one dataset
-DATASET_NAME = "sp_school_day_1"
-run_experiment_on_dataset(DATASET_NAME, VISUALIZATION_ON)
+# ## Option 2: run experiment on one dataset
+# DATASET_NAME = "football"
+# VISUALIZATION_ON = False
+# run_experiment_on_dataset(DATASET_NAME, VISUALIZATION_ON)

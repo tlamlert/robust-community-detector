@@ -4,7 +4,7 @@ import time
 
 # Default values
 DEFAULT_MAX_ITER = 2000
-DEFAULT_CONV_CRIT = 1e-7
+DEFAULT_CONV_CRIT = 1e-3
 epsilon = 1e-16
 
 def l2_NMF(X, k, max_iter=DEFAULT_MAX_ITER, conv_crit=DEFAULT_CONV_CRIT, return_losses=False):
@@ -66,8 +66,6 @@ def l21_NMF(X, k, max_iter=DEFAULT_MAX_ITER, conv_crit=DEFAULT_CONV_CRIT, return
 
         if len(losses) > 1:
             prev_loss = losses[-2]
-            if (prev_loss < l21_loss):
-                print("wrong")
             if ((prev_loss - l21_loss) / prev_loss) < conv_crit:
                 break
     time_used = time.time() - start_time

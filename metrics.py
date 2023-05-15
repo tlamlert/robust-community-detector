@@ -19,6 +19,8 @@ def purity_score(y_true, y_pred):
 
 def conductance(edges, y_pred):
     num_comms = len(set(y_pred))
+    mapping = {k: v for k, v in zip(set(y_pred), range(num_comms))}
+    y_pred = [mapping[y] for y in y_pred]
     w = np.zeros((num_comms, num_comms))
     for u, v in edges:
         w[y_pred[u], y_pred[v]] += 1
